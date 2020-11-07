@@ -1,0 +1,13 @@
+[package]
+name = "ron-objmask-workaround"
+version = "1.0.0"
+authors = ["Matthew Nicholls <matthew.nicholls95@hotmail.co.uk>"]
+edition = "2018"
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+
+[dependencies]
+quick-xml = "0.20"
+indexmap = "1.6"
