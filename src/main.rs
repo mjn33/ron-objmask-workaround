@@ -297,7 +297,9 @@ fn calculate_new_balance(unit_objmask_map: &IndexMap<String, HashSet<&'static st
     // are bugged, but might as well do it for correctness sake.
     for (_, entry) in &mut new_unit_balance.entries {
         for (_, objmask_name) in OBJMASK_INFO.iter() {
-            entry.modifiers.get_mut(*objmask_name).map(|modifier| *modifier = 100.0);
+            if let Some(modifier) = entry.modifiers.get_mut(*objmask_name) {
+                *modifier = 100.0;
+            }
         }
     }
 
