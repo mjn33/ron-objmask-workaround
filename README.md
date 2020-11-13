@@ -15,6 +15,9 @@ The game's unitrules.xml should be in the same directory for this tool
 to work. This will output the fixed balance file to standard output,
 where it can be redirected to a file.
 
+Otherwise, if the tool is run with no parameters a file dialog will be
+presented.
+
 ## License
 
 Copyright (c) 2020 Matthew J. Nicholls

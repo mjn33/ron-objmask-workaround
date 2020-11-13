@@ -1,12 +1,176 @@
 use std::collections::HashSet;
 use std::fs::File;
-use std::io::{BufReader, Write};
+use std::io::{BufReader, BufWriter, Write};
 use std::path::Path;
+
+use indexmap::IndexMap;
 
 use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, Event};
 use quick_xml::{Reader, Writer};
 
-use indexmap::IndexMap;
+#[cfg(windows)]
+use wchar::wch_c;
+
+#[cfg(windows)]
+use winapi::Interface;
+
+#[cfg(windows)]
+mod w32 {
+    pub use winapi::shared::winerror::*;
+    pub use winapi::um::objbase::*;
+    pub use winapi::um::combaseapi::*;
+    pub use winapi::um::shobjidl::*;
+    pub use winapi::um::shobjidl_core::*;
+    pub use winapi::um::shtypes::*;
+    pub use winapi::um::wincon::*;
+    pub use winapi::um::winuser::*;
+}
+
+#[cfg(windows)]
+unsafe fn from_utf16_nul(s: *const u16) -> String {
+    let mut len = 0;
+
+    // Determine length.
+    while *s.offset(len) != 0 {
+        len += 1;
+    }
+
+    String::from_utf16_lossy(&std::slice::from_raw_parts(s, len as usize))
+}
+
+struct ComInit;
+
+impl ComInit {
+    fn new() -> ComInit {
+        #[cfg(windows)]
+        unsafe {
+            let hr = w32::CoInitializeEx(std::ptr::null_mut(), w32::COINIT_APARTMENTTHREADED | w32::COINIT_DISABLE_OLE1DDE);
+            assert!(w32::SUCCEEDED(hr));
+        }
+
+        ComInit
+    }
+}
+
+impl Drop for ComInit {
+    fn drop(&mut self) {
+        #[cfg(windows)]
+        unsafe {
+            w32::CoUninitialize();
+        }
+    }
+}
+
+#[cfg(windows)]
+fn show_file_dialog(saving: bool) -> Option<String> {
+    unsafe {
+        let clsid = if saving {
+            w32::CLSID_FileSaveDialog
+        } else {
+            w32::CLSID_FileOpenDialog
+        };
+
+        let mut file_dialog: *mut w32::IFileDialog = std::ptr::null_mut();
+        let hr = w32::CoCreateInstance(
+            &clsid,
+            std::ptr::null_mut(),
+            w32::CLSCTX_ALL,
+            &w32::IFileDialog::uuidof(),
+            &mut file_dialog as *mut *mut _ as *mut *mut winapi::ctypes::c_void);
+
+        assert!(w32::SUCCEEDED(hr));
+
+        if !saving {
+            (*file_dialog).SetTitle(wch_c!("Select balance.xml").as_ptr());
+        }
+
+        if saving {
+            let filter_spec: [w32::COMDLG_FILTERSPEC; 2] = [
+                w32::COMDLG_FILTERSPEC {
+                    pszName: wch_c!("XML Files").as_ptr(),
+                    pszSpec: wch_c!("*.xml").as_ptr()
+                },
+                w32::COMDLG_FILTERSPEC {
+                    pszName: wch_c!("All Files").as_ptr(),
+                    pszSpec: wch_c!("*.*").as_ptr()
+                },
+            ];
+
+            let hr = (*file_dialog).SetFileTypes(filter_spec.len() as u32, filter_spec.as_ptr());
+            assert!(w32::SUCCEEDED(hr));
+
+            let hr = (*file_dialog).SetFileName(wch_c!("balance_out.xml").as_ptr());
+            assert!(w32::SUCCEEDED(hr));
+        } else {
+            let filter_spec: [w32::COMDLG_FILTERSPEC; 2] = [
+                w32::COMDLG_FILTERSPEC {
+                    pszName: wch_c!("balance.xml").as_ptr(),
+                    pszSpec: wch_c!("balance.xml").as_ptr()
+                },
+                w32::COMDLG_FILTERSPEC {
+                    pszName: wch_c!("All Files").as_ptr(),
+                    pszSpec: wch_c!("*.*").as_ptr()
+                },
+            ];
+
+            let hr = (*file_dialog).SetFileTypes(filter_spec.len() as u32, filter_spec.as_ptr());
+            assert!(w32::SUCCEEDED(hr));
+        }
+
+        let hr = (*file_dialog).Show(std::ptr::null_mut());
+
+        let result;
+        if w32::SUCCEEDED(hr) {
+            let mut item: *mut w32::IShellItem = std::ptr::null_mut();
+            let hr = (*file_dialog).GetResult(&mut item);
+            assert!(w32::SUCCEEDED(hr));
+
+            let mut file_path = std::ptr::null_mut();
+            (*item).GetDisplayName(w32::SIGDN_FILESYSPATH, &mut file_path);
+
+            let file_path = from_utf16_nul(file_path);
+
+            result = Some(file_path);
+        } else {
+            result = None;
+        }
+
+        (*file_dialog).Release();
+
+        result
+    }
+}
+
+#[cfg(not(windows))]
+fn show_file_dialog(_saving: bool) -> Option<String> {
+    None
+}
+
+enum MessageType {
+    Info,
+    Warning,
+    Error,
+}
+
+#[cfg(windows)]
+fn show_message_box(msg: &str, msg_type: MessageType) {
+    unsafe {
+        let mut msg: Vec<u16> = msg.encode_utf16().collect();
+        msg.push(0);
+
+        let (caption, flags) = match msg_type {
+            MessageType::Info => (wch_c!("Info").as_ptr(), w32::MB_ICONINFORMATION | w32::MB_OK),
+            MessageType::Warning => (wch_c!("Warning").as_ptr(), w32::MB_ICONWARNING | w32::MB_OK),
+            MessageType::Error => (wch_c!("Error").as_ptr(), w32::MB_ICONERROR | w32::MB_OK),
+        };
+
+        w32::MessageBoxW(std::ptr::null_mut(), msg.as_ptr(), caption, flags);
+    }
+}
+
+#[cfg(not(windows))]
+fn show_message_box(_msg: &str, _msg_type: MessageType) {
+}
 
 const OBJMASK_INFO: [(char, &str); 32] = [
     ('A', "Flag_A_OBJMASK_ARMORED"),
@@ -58,10 +222,15 @@ struct UnitBalanceEntry {
 }
 
 fn main() {
+    // Handle COM init/deinit.
+    let _com_init = ComInit::new();
+
     let balance_xml_path = std::env::args().nth(1);
+    let gui_mode;
 
     let balance_xml_path = match balance_xml_path {
         Some(path) => {
+            gui_mode = false;
             if path == "-h" || path == "--help" {
                 print_usage();
                 return;
@@ -70,17 +239,35 @@ fn main() {
             }
         }
         None => {
-            print_usage();
-            return;
+            #[cfg(windows)]
+            unsafe {
+                w32::FreeConsole();
+            }
+            gui_mode = true;
+            match show_file_dialog(false /* saving */) {
+                Some(path) => path,
+                None => {
+                    print_usage();
+                    return;
+                }
+            }
         }
     };
 
-    match run(Path::new(&balance_xml_path)) {
+    match run(Path::new(&balance_xml_path), gui_mode) {
         Ok(_) => {
-            eprintln!("Complete");
+            if gui_mode {
+                show_message_box("Complete", MessageType::Info);
+            } else {
+                eprintln!("Complete");
+            }
         }
         Err(e) => {
-            eprintln!("Error: {}", e);
+            if gui_mode {
+                show_message_box(&e, MessageType::Error);
+            } else {
+                eprintln!("Error: {}", e);
+            }
         }
     }
 }
@@ -95,7 +282,7 @@ fn print_usage() {
     eprintln!("    -h, --help  Print this help information");
 }
 
-fn run(balance_xml_path: &Path) -> Result<(), String> {
+fn run(balance_xml_path: &Path, gui_mode: bool) -> Result<(), String> {
     let ron_data_path = balance_xml_path.parent()
         .ok_or_else(|| "No parent directory found".to_owned())?;
 
@@ -105,8 +292,20 @@ fn run(balance_xml_path: &Path) -> Result<(), String> {
     let old_unit_balance = parse_balance(balance_xml_path)?;
     let new_unit_balance = calculate_new_balance(&unit_objmask_map, &old_unit_balance);
 
-    write_new_balance(&mut std::io::stdout(), &new_unit_balance)
-        .map_err(|e| format!("Failed to write new balance.xml file: {}", e))?;
+    let result = if gui_mode {
+        let new_balance_xml_path = match show_file_dialog(true /* saving */) {
+            Some(path) => path,
+            None => return Ok(()),
+        };
+        let balance_xml_file = File::create(new_balance_xml_path)
+            .map_err(|e| format!("{}", e))?;
+        let mut balance_xml_writer = BufWriter::new(balance_xml_file);
+        write_new_balance(&mut balance_xml_writer, &new_unit_balance)
+    } else {
+        write_new_balance(&mut std::io::stdout(), &new_unit_balance)
+    };
+
+    result.map_err(|e| format!("Failed to write new balance.xml file: {}", e))?;
 
     Ok(())
 }
