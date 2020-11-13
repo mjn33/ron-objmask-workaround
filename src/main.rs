@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::fs::File;
-use std::io::{BufReader, BufWriter};
-use std::path::PathBuf;
+use std::io::{BufReader, Write};
+use std::path::Path;
 
 use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, Event};
 use quick_xml::{Reader, Writer};
@@ -58,59 +58,67 @@ struct UnitBalanceEntry {
 }
 
 fn main() {
-    let ron_dir = std::env::args().nth(1);
+    let balance_xml_path = std::env::args().nth(1);
 
-    if ron_dir.is_none() {
-        print_usage();
-        return;
-    }
+    let balance_xml_path = match balance_xml_path {
+        Some(path) => {
+            if path == "-h" || path == "--help" {
+                print_usage();
+                return;
+            } else {
+                path
+            }
+        }
+        None => {
+            print_usage();
+            return;
+        }
+    };
 
-    let ron_dir = ron_dir.unwrap();
-
-    if ron_dir == "-h" || ron_dir == "--help" {
-        print_usage();
-        return;
-    }
-
-    match run(&ron_dir) {
+    match run(Path::new(&balance_xml_path)) {
         Ok(_) => {
-            println!("Complete");
+            eprintln!("Complete");
         }
         Err(e) => {
-            println!("Error: {}", e);
+            eprintln!("Error: {}", e);
         }
     }
 }
 
 fn print_usage() {
-    println!("Rise of Nations: Extended Edition OBJ_MASK bug workaround");
-    println!("");
-    println!("USAGE:");
-    println!("    ron-objmask-workaround [ron data directory]");
-    println!("");
-    println!("OPTION:");
-    println!("    -h, --help  Print this help information");
+    eprintln!("Rise of Nations: Extended Edition OBJ_MASK bug workaround");
+    eprintln!("");
+    eprintln!("USAGE:");
+    eprintln!("    ron-objmask-workaround [balance file]");
+    eprintln!("");
+    eprintln!("OPTION:");
+    eprintln!("    -h, --help  Print this help information");
 }
 
-fn run(ron_dir: &str) -> Result<(), String> {
-    let unit_objmask_map = parse_unitrules(&ron_dir)?;
-    let old_unit_balance = parse_balance(&ron_dir)?;
+fn run(balance_xml_path: &Path) -> Result<(), String> {
+    let ron_data_path = balance_xml_path.parent()
+        .ok_or_else(|| "No parent directory found".to_owned())?;
+
+    let unit_rules_path = ron_data_path.join("unitrules.xml");
+
+    let unit_objmask_map = parse_unitrules(&unit_rules_path)?;
+    let old_unit_balance = parse_balance(balance_xml_path)?;
     let new_unit_balance = calculate_new_balance(&unit_objmask_map, &old_unit_balance);
 
-    write_new_balance(&ron_dir, &new_unit_balance)
+    write_new_balance(&mut std::io::stdout(), &new_unit_balance)
         .map_err(|e| format!("Failed to write new balance.xml file: {}", e))?;
 
     Ok(())
 }
 
-fn parse_unitrules(ron_dir: &str) -> Result<IndexMap<String, HashSet<&'static str>>, String> {
-    let unitrules_xml_file = File::open(PathBuf::from(ron_dir).join("unitrules.xml"))
+fn parse_unitrules(unitrules_path: &Path) -> Result<IndexMap<String, HashSet<&'static str>>, String> {
+    let unitrules_xml_file = File::open(unitrules_path)
         .map_err(|e| format!("Failed to open unitrules.xml: {}", e))?;
     let unitrules_xml_reader = BufReader::new(unitrules_xml_file);
 
     let mut unitrules_xml_document = Reader::from_reader(unitrules_xml_reader);
 
-    println!("Processing unitrules.xml");
+    eprintln!("Processing unitrules.xml");
 
     let mut unit_objmask_map: IndexMap<String, HashSet<&'static str>> = IndexMap::new();
 
@@ -156,7 +164,7 @@ fn parse_unitrules(ron_dir: &str) -> Result<IndexMap<String, HashSet<&'static st
                     if let Some(name) = char_to_attrib_str(c) {
                         obj_masks.insert(name);
                     } else {
-                        println!("Warning: unknown OBJ_MASK flag found '{}'", c);
+                        eprintln!("Warning: unknown OBJ_MASK flag found '{}'", c);
                     }
                 }
 
@@ -167,7 +175,7 @@ fn parse_unitrules(ron_dir: &str) -> Result<IndexMap<String, HashSet<&'static st
                     }
                     Entry::Occupied(mut o) => {
                         if *o.get() != obj_masks {
-                            println!("Warning: different units with identical names have differing OBJ_MASK values");
+                            eprintln!("Warning: different units with identical names have differing OBJ_MASK values");
                         }
                         o.get_mut().extend(obj_masks.iter());
                     }
@@ -201,14 +209,14 @@ fn parse_unitrules(ron_dir: &str) -> Result<IndexMap<String, HashSet<&'static st
     Ok(unit_objmask_map)
 }
 
-fn parse_balance(ron_dir: &str) -> Result<UnitBalance, String> {
-    let balance_xml_file = File::open(PathBuf::from(ron_dir).join("balance.xml"))
+fn parse_balance(balance_xml_path: &Path) -> Result<UnitBalance, String> {
+    let balance_xml_file = File::open(balance_xml_path)
         .map_err(|e| format!("Failed to open balance.xml: {}", e))?;
     let balance_xml_reader = BufReader::new(balance_xml_file);
 
     let mut balance_xml_document = Reader::from_reader(balance_xml_reader);
 
-    println!("Processing balance.xml");
+    eprintln!("Processing balance.xml");
 
     let mut old_unit_balance = UnitBalance::default();
 
@@ -313,13 +321,10 @@ fn calculate_new_balance(unit_objmask_map: &IndexMap<String, HashSet<&'static st
     new_unit_balance
 }
 
-fn write_new_balance(ron_dir: &str, new_unit_balance: &UnitBalance) -> Result<(), quick_xml::Error> {
-    let balance_xml_file = File::create(ron_dir.to_owned() + "/balance_out.xml")?;
-    let balance_xml_writer = BufWriter::new(balance_xml_file);
+fn write_new_balance(writer: &mut dyn Write, new_unit_balance: &UnitBalance) -> Result<(), quick_xml::Error> {
+    let mut balance_xml_out = Writer::new_with_indent(writer, b' ', 2);
 
-    let mut balance_xml_out = Writer::new_with_indent(balance_xml_writer, b' ', 2);
-
-    println!("Writing new balance.xml");
+    eprintln!("Writing new balance.xml");
 
     balance_xml_out.write_event(Event::Decl(BytesDecl::new(b"1.0", None, None)))?;
 

@@ -6,13 +6,14 @@ accounting for their object masks.
 
 ## Usage
 
-Run the following command, passing the location of the game's data directory,
-which contains both balance.xml and unitrules.xml needed for this tool to work,
-e.g.:
+Run the following command from the command line, passing the location
+of the game's balance.xml file.
 
-    ron-objmask-workaround "C:\Program Files (x86)\Steam\steamapps\common\Rise of Nations\Data"
+    ron-objmask-workaround "C:\Program Files (x86)\Steam\steamapps\common\Rise of Nations\Data\balance.xml"
 
-This will output the fixed balance as `balance_out.xml` in the data directory.
+The game's unitrules.xml should be in the same directory for this tool
+to work. This will output the fixed balance file to standard output,
+where it can be redirected to a file.
 
 ## License
 
