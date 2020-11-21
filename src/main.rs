@@ -1,7 +1,8 @@
-use std::collections::HashSet;
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Write};
 use std::path::Path;
+
+use fnv::{FnvBuildHasher, FnvHashSet};
 
 use indexmap::IndexMap;
 
@@ -25,6 +26,8 @@ mod w32 {
     pub use winapi::um::wincon::*;
     pub use winapi::um::winuser::*;
 }
+
+type FnvIndexMap<K, V> = IndexMap<K, V, FnvBuildHasher>;
 
 #[cfg(windows)]
 unsafe fn from_utf16_nul(s: *const u16) -> String {
@@ -229,12 +232,12 @@ fn char_to_attrib_str(c: char) -> Option<&'static str> {
 
 #[derive(Clone, Debug, Default)]
 struct UnitBalance {
-    entries: IndexMap<String, UnitBalanceEntry>,
+    entries: FnvIndexMap<String, UnitBalanceEntry>,
 }
 
 #[derive(Clone, Debug, Default)]
 struct UnitBalanceEntry {
-    modifiers: IndexMap<String, f32>,
+    modifiers: FnvIndexMap<String, f32>,
 }
 
 fn main() {
@@ -326,7 +329,7 @@ fn run(balance_xml_path: &Path, gui_mode: bool) -> Result<(), String> {
     Ok(())
 }
 
-fn parse_unitrules(unitrules_path: &Path) -> Result<IndexMap<String, HashSet<&'static str>>, String> {
+fn parse_unitrules(unitrules_path: &Path) -> Result<FnvIndexMap<String, FnvHashSet<&'static str>>, String> {
     let unitrules_xml_file = File::open(unitrules_path)
         .map_err(|e| format!("Failed to open unitrules.xml: {}", e))?;
     let unitrules_xml_reader = BufReader::new(unitrules_xml_file);
@@ -335,7 +338,7 @@ fn parse_unitrules(unitrules_path: &Path) -> Result<IndexMap<String, HashSet<&'s
 
     eprintln!("Processing unitrules.xml");
 
-    let mut unit_objmask_map: IndexMap<String, HashSet<&'static str>> = IndexMap::new();
+    let mut unit_objmask_map: FnvIndexMap<String, FnvHashSet<&'static str>> = FnvIndexMap::default();
 
     let mut buf = Vec::new();
     let mut in_unit_element = false;
@@ -381,7 +384,7 @@ fn parse_unitrules(unitrules_path: &Path) -> Result<IndexMap<String, HashSet<&'s
                     continue;
                 }
 
-                let mut obj_masks = HashSet::<&'static str>::new();
+                let mut obj_masks = FnvHashSet::<&'static str>::default();
                 for c in cur_obj_mask.chars() {
                     if let Some(name) = char_to_attrib_str(c) {
                         obj_masks.insert(name);
@@ -449,7 +452,7 @@ fn parse_balance(balance_xml_path: &Path) -> Result<UnitBalance, String> {
         match event {
             Event::Start(e) | Event::Empty(e) if e.name() == b"ENTRY" => {
                 let mut name = String::new();
-                let mut modifiers = IndexMap::new();
+                let mut modifiers = FnvIndexMap::default();
                 for attrib in e.attributes() {
                     let attrib = attrib
                         .map_err(|e| format!("Failed to get attribute in a balance ENTRY element: {}", e))?;
@@ -490,7 +493,7 @@ fn parse_balance(balance_xml_path: &Path) -> Result<UnitBalance, String> {
     Ok(old_unit_balance)
 }
 
-fn calculate_new_balance(unit_objmask_map: &IndexMap<String, HashSet<&'static str>>,
+fn calculate_new_balance(unit_objmask_map: &FnvIndexMap<String, FnvHashSet<&'static str>>,
                          old_unit_balance: &UnitBalance) -> UnitBalance {
     let mut new_unit_balance = UnitBalance::default();
 
@@ -526,7 +529,7 @@ fn calculate_new_balance(unit_objmask_map: &IndexMap<String, HashSet<&'static st
     // Reset objmask scaling to 100, not strictly necessary since they
     // are bugged, but might as well do it for correctness sake.
     for &(_, objmask_name) in OBJMASK_INFO.iter() {
-        let mut modifiers = IndexMap::new();
+        let mut modifiers = FnvIndexMap::default();
         for (unit, _) in unit_objmask_map.iter() {
             modifiers.insert(unit.to_owned(), 100.0);
         }
