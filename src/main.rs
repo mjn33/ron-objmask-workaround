@@ -207,6 +207,22 @@ const OBJMASK_INFO: [(char, &str); 32] = [
     ('6', "Flag_6_OBJMASK_ANTI_AIR"),
 ];
 
+const UNIT_IGNORE_LIST: [&str; 13] = [
+    "Fur_Trapper",
+    "Wild_Bird",
+    "Flock_Bird",
+    "Gull_Bird",
+    "Farm_Pig",
+    "Farm_Chicken",
+    "Herd_Horse",
+    "Herd_Sheep",
+    "Herd_Bison",
+    "Herd_Bear",
+    "Herd_Fish",
+    "Herd_Whales",
+    "Herd_Peacock",
+];
+
 fn char_to_attrib_str(c: char) -> Option<&'static str> {
     OBJMASK_INFO.iter().find(|(c2, _)| c2 == &c).map(|(_, attrib)| *attrib)
 }
@@ -357,6 +373,13 @@ fn parse_unitrules(unitrules_path: &Path) -> Result<IndexMap<String, HashSet<&'s
             }
             Event::End(e) if e.name() == b"UNIT" => {
                 in_unit_element = false;
+
+                if UNIT_IGNORE_LIST.contains(&cur_unit_name.as_str()) {
+                    // Ignore this unit entry.
+                    cur_unit_name.clear();
+                    cur_obj_mask.clear();
+                    continue;
+                }
 
                 let mut obj_masks = HashSet::<&'static str>::new();
                 for c in cur_obj_mask.chars() {
