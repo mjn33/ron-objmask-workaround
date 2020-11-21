@@ -469,7 +469,7 @@ fn parse_balance(balance_xml_path: &Path) -> Result<UnitBalance, String> {
 
 fn calculate_new_balance(unit_objmask_map: &IndexMap<String, HashSet<&'static str>>,
                          old_unit_balance: &UnitBalance) -> UnitBalance {
-    let mut new_unit_balance = old_unit_balance.clone();
+    let mut new_unit_balance = UnitBalance::default();
 
     // Calculate the matrix of all unit balancing modifiers.
     for (unit_a, unit_a_objmask) in unit_objmask_map.iter() {
@@ -502,18 +502,17 @@ fn calculate_new_balance(unit_objmask_map: &IndexMap<String, HashSet<&'static st
 
     // Reset objmask scaling to 100, not strictly necessary since they
     // are bugged, but might as well do it for correctness sake.
-    for (_, entry) in &mut new_unit_balance.entries {
-        for (_, objmask_name) in OBJMASK_INFO.iter() {
-            if let Some(modifier) = entry.modifiers.get_mut(*objmask_name) {
-                *modifier = 100.0;
-            }
+    for &(_, objmask_name) in OBJMASK_INFO.iter() {
+        let mut modifiers = IndexMap::new();
+        for (unit, _) in unit_objmask_map.iter() {
+            modifiers.insert(unit.to_owned(), 100.0);
         }
+        new_unit_balance.entries.insert(objmask_name.to_owned(), UnitBalanceEntry { modifiers });
     }
 
-    for (_, objmask_name) in OBJMASK_INFO.iter() {
-        let mut entry = new_unit_balance.entries.get_mut(*objmask_name);
-        for (_, modifier) in entry.iter_mut().flat_map(|v| v.modifiers.iter_mut()) {
-            *modifier = 100.0;
+    for (_, entry) in &mut new_unit_balance.entries {
+        for &(_, objmask_name) in OBJMASK_INFO.iter() {
+            entry.modifiers.insert(objmask_name.to_owned(), 100.0);
         }
     }
 
