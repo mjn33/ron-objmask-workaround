@@ -210,8 +210,7 @@ const OBJMASK_INFO: [(char, &str); 32] = [
     ('6', "Flag_6_OBJMASK_ANTI_AIR"),
 ];
 
-const UNIT_IGNORE_LIST: [&str; 13] = [
-    "Fur_Trapper",
+const UNIT_IGNORE_LIST: [&str; 12] = [
     "Wild_Bird",
     "Flock_Bird",
     "Gull_Bird",
